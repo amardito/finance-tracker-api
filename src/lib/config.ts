@@ -16,6 +16,13 @@ const envSchema = z.object({
     .string()
     .default('true')
     .transform((v) => v === 'true'),
+  // Cookie behaviour. Override defaults when frontend and API live on different sites.
+  // SAMESITE=none + SECURE=true is required for cross-site cookies over HTTPS.
+  COOKIE_SAMESITE: z.enum(['lax', 'strict', 'none']).optional(),
+  COOKIE_SECURE: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
   LOG_LEVEL: z.string().default('info'),
 });
 

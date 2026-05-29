@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import { randomBytes } from 'node:crypto';
-import { getSession } from '../lib/session.js';
+import { cookieSameSite, cookieSecure, getSession } from '../lib/session.js';
 import { HttpError } from './error.js';
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -29,8 +29,8 @@ export async function csrfProtect(req: Request, res: Response, next: NextFunctio
         await session.save();
         res.cookie(CSRF_COOKIE, token, {
           httpOnly: false,
-          sameSite: 'lax',
-          secure: process.env.NODE_ENV === 'production',
+          sameSite: cookieSameSite,
+          secure: cookieSecure,
           path: '/',
         });
       }

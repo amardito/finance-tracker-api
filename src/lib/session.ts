@@ -7,13 +7,19 @@ export interface SessionData {
   csrf?: string;
 }
 
+// Cookie attributes can be overridden via COOKIE_SAMESITE and COOKIE_SECURE env vars.
+// Defaults: sameSite=lax, secure=isProd. Cross-site cookies require sameSite=none + secure=true.
+export const cookieSameSite: 'lax' | 'strict' | 'none' = config.COOKIE_SAMESITE ?? 'lax';
+export const cookieSecure: boolean =
+  config.COOKIE_SECURE !== undefined ? config.COOKIE_SECURE : isProd;
+
 export const sessionOptions: SessionOptions = {
   password: config.SESSION_SECRET,
   cookieName: config.SESSION_COOKIE_NAME,
   cookieOptions: {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: isProd,
+    sameSite: cookieSameSite,
+    secure: cookieSecure,
     maxAge: 60 * 60 * 24 * 7, // 7 days
     path: '/',
   },
