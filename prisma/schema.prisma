@@ -1,0 +1,239 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountType {
+  CASH
+  CHECKING
+  SAVINGS
+  CREDIT
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+}
+
+enum TxType {
+  INCOME
+  EXPENSE
+}
+
+enum BudgetPeriod {
+  WEEKLY
+  MONTHLY
+}
+
+enum Cadence {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum GoalStatus {
+  ACTIVE
+  DONE
+  ARCHIVED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String?  @unique
+  passwordHash String?
+  tokenHash    String?  @unique
+  name         String
+  currency     String   @default("USD")
+  createdAt    DateTime @default(now())
+
+  accounts       Account[]
+  categories     Category[]
+  tags           Tag[]
+  transactions   Transaction[]
+  budgets        Budget[]
+  recurringRules RecurringRule[]
+  goals          Goal[]
+  auditLogs      AuditLog[]
+}
+
+model Account {
+  id             String      @id @default(cuid())
+  userId         String
+  name           String
+  type           AccountType
+  openingBalance Decimal     @default(0) @db.Decimal(14, 2)
+  currency       String      @default("USD")
+  archivedAt     DateTime?
+  createdAt      DateTime    @default(now())
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions   Transaction[]
+  recurringRules RecurringRule[]
+  goals          Goal[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model Category {
+  id        String       @id @default(cuid())
+  userId    String
+  name      String
+  type      CategoryType
+  color     String       @default("#6366f1")
+  icon      String?
+  parentId  String?
+  createdAt DateTime     @default(now())
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent         Category?       @relation("CategoryParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Category[]      @relation("CategoryParent")
+  transactions   Transaction[]
+  budgets        Budget[]
+  recurringRules RecurringRule[]
+
+  @@unique([userId, name, parentId])
+  @@index([userId])
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  color     String   @default("#94a3b8")
+  createdAt DateTime @default(now())
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions TransactionTag[]
+
+  @@unique([userId, name])
+}
+
+model Transaction {
+  id         String    @id @default(cuid())
+  userId     String
+  accountId  String
+  categoryId String
+  amount     Decimal   @db.Decimal(14, 2)
+  type       TxType
+  date       DateTime
+  note       String?
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
+
+  // Idempotency for recurring rule creation
+  recurringRuleId String?
+  scheduledFor    DateTime?
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  Account          @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  category Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  tags     TransactionTag[]
+
+  @@unique([recurringRuleId, scheduledFor])
+  @@index([userId, date])
+  @@index([userId, categoryId])
+  @@index([userId, accountId])
+}
+
+model TransactionTag {
+  transactionId String
+  tagId         String
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tag         Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+}
+
+model Budget {
+  id         String       @id @default(cuid())
+  userId     String
+  categoryId String
+  amount     Decimal      @db.Decimal(14, 2)
+  period     BudgetPeriod
+  startDate  DateTime
+  rollover   Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId, period])
+  @@index([userId])
+}
+
+model RecurringRule {
+  id         String    @id @default(cuid())
+  userId     String
+  accountId  String
+  categoryId String
+  amount     Decimal   @db.Decimal(14, 2)
+  type       TxType
+  cadence    Cadence
+  interval   Int       @default(1)
+  note       String?
+  startDate  DateTime
+  endDate    DateTime?
+  nextRunAt  DateTime
+  lastRunAt  DateTime?
+  pausedAt   DateTime?
+  createdAt  DateTime  @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([nextRunAt])
+}
+
+model Goal {
+  id            String     @id @default(cuid())
+  userId        String
+  name          String
+  targetAmount  Decimal    @db.Decimal(14, 2)
+  currentAmount Decimal    @default(0) @db.Decimal(14, 2)
+  deadline      DateTime?
+  accountId     String?
+  status        GoalStatus @default(ACTIVE)
+  createdAt     DateTime   @default(now())
+
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account       Account?           @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  contributions GoalContribution[]
+
+  @@index([userId])
+}
+
+model GoalContribution {
+  id      String   @id @default(cuid())
+  goalId  String
+  amount  Decimal  @db.Decimal(14, 2)
+  date    DateTime
+  note    String?
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+}
+
+model AuditLog {
+  id       String   @id @default(cuid())
+  userId   String
+  action   String
+  entity   String
+  entityId String?
+  payload  Json?
+  at       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, at])
+}
