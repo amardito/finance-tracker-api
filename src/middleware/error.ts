@@ -37,8 +37,5 @@ export function errorHandler(
     return;
   }
   logger.error({ err }, 'Unhandled error');
-  if (err instanceof Error) {
-    res.set('X-Debug', err.message.slice(0, 300));
-  }
   res.status(500).json({ error: { code: 'INTERNAL', message: 'Internal server error' } });
 }
