@@ -25,6 +25,12 @@ export const sessionOptions: SessionOptions = {
   },
 };
 
+const sessionCache = new WeakMap<Request, IronSession<SessionData>>();
+
 export async function getSession(req: Request, res: Response): Promise<IronSession<SessionData>> {
-  return getIronSession<SessionData>(req, res, sessionOptions);
+  const existing = sessionCache.get(req);
+  if (existing) return existing;
+  const session = await getIronSession<SessionData>(req, res, sessionOptions);
+  sessionCache.set(req, session);
+  return session;
 }
