@@ -8,6 +8,7 @@ import type { IncomingMessage } from 'node:http';
 import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { csrfProtect } from './middleware/auth.js';
+import { getSession } from './lib/session.js';
 import { errorHandler, notFound } from './middleware/error.js';
 import { authRouter } from './routes/auth.js';
 import { accountsRouter } from './routes/accounts.js';
@@ -67,6 +68,17 @@ export function createApp(): express.Express {
 
   // CSRF protection on all /api/* (auth router gets its own GET pass)
   app.use('/api', csrfProtect);
+
+  // CSRF token endpoint — returns the current token in JSON so cross-origin SPAs
+  // can read it (browsers don't expose the XSRF-TOKEN cookie to a different origin).
+  app.get('/api/csrf', async (req, res, next) => {
+    try {
+      const session = await getSession(req, res);
+      res.json({ token: session.csrf ?? null });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   app.use('/api/auth', authRouter);
   app.use('/api/accounts', accountsRouter);
