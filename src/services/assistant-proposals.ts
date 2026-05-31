@@ -12,7 +12,7 @@ type ProposalWithAuditInput = {
   payload?: Prisma.InputJsonValue;
 };
 
-async function writeAudit(input: ProposalWithAuditInput): Promise<void> {
+export async function writeAssistantAudit(input: ProposalWithAuditInput): Promise<void> {
   await prisma.auditLog.create({
     data: {
       userId: input.userId,
@@ -51,13 +51,18 @@ export async function createAssistantProposal(
       expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
     },
   });
-  await writeAudit({
+  await writeAssistantAudit({
     userId,
     proposalId: proposal.id,
     action: 'proposal.create',
     entity: 'AssistantProposal',
     entityId: proposal.id,
-    payload: { actionType: proposal.actionType, sourceChannel: proposal.sourceChannel },
+    payload: {
+      actionType: proposal.actionType,
+      sourceChannel: proposal.sourceChannel,
+      clawMode: proposal.clawMode,
+      riskLevel: proposal.riskLevel,
+    },
   });
   return proposal;
 }
@@ -75,7 +80,19 @@ export async function transitionAssistantProposal(
   if (proposal.expiresAt && proposal.expiresAt <= new Date()) {
     const expired = await prisma.assistantProposal.update({
       where: { id: proposal.id },
-      data: { status: 'EXPIRED' },
+    data: { status: 'EXPIRED' },
+    });
+    await writeAssistantAudit({
+      userId,
+      proposalId: proposal.id,
+      action: 'proposal.expire',
+      entity: 'AssistantProposal',
+      entityId: proposal.id,
+      payload: {
+        actionType: proposal.actionType,
+        sourceChannel: proposal.sourceChannel,
+        expiredAt: expired.expiresAt?.toISOString(),
+      },
     });
     throw new HttpError(409, 'PROPOSAL_EXPIRED', `Proposal expired at ${expired.expiresAt?.toISOString()}`);
   }
@@ -84,12 +101,17 @@ export async function transitionAssistantProposal(
     where: { id: proposal.id },
     data: { status },
   });
-  await writeAudit({
+  await writeAssistantAudit({
     userId,
     proposalId: proposal.id,
     action: `proposal.${transition}`,
     entity: 'AssistantProposal',
     entityId: proposal.id,
+    payload: {
+      actionType: proposal.actionType,
+      sourceChannel: proposal.sourceChannel,
+      clawMode: proposal.clawMode,
+    },
   });
   return updated;
 }
@@ -104,6 +126,18 @@ export async function executeAssistantProposal(userId: string, proposalId: strin
     await prisma.assistantProposal.update({
       where: { id: proposal.id },
       data: { status: 'EXPIRED' },
+    });
+    await writeAssistantAudit({
+      userId,
+      proposalId: proposal.id,
+      action: 'proposal.expire',
+      entity: 'AssistantProposal',
+      entityId: proposal.id,
+      payload: {
+        actionType: proposal.actionType,
+        sourceChannel: proposal.sourceChannel,
+        expiredAt: proposal.expiresAt.toISOString(),
+      },
     });
     throw new HttpError(409, 'PROPOSAL_EXPIRED', `Proposal expired at ${proposal.expiresAt.toISOString()}`);
   }
@@ -157,7 +191,13 @@ export async function executeAssistantProposal(userId: string, proposalId: strin
           action: 'proposal.execute',
           entity: 'Transaction',
           entityId: transaction.id,
-          payload: { actionType: proposal.actionType },
+          payload: {
+            actionType: proposal.actionType,
+            sourceChannel: proposal.sourceChannel,
+            clawMode: proposal.clawMode,
+            resultEntity: 'Transaction',
+            resultEntityId: transaction.id,
+          },
         },
       });
       return { proposal: updatedProposal, transaction };
@@ -169,13 +209,17 @@ export async function executeAssistantProposal(userId: string, proposalId: strin
         where: { id: proposal.id },
         data: { status: 'FAILED', failureReason: err.message },
       });
-      await writeAudit({
+      await writeAssistantAudit({
         userId,
         proposalId: proposal.id,
         action: 'proposal.fail',
         entity: 'AssistantProposal',
         entityId: proposal.id,
-        payload: { reason: err.message },
+        payload: {
+          actionType: proposal.actionType,
+          sourceChannel: proposal.sourceChannel,
+          reason: err.message,
+        },
       });
       return { proposal: failed, transaction: null };
     }

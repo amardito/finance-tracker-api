@@ -1,6 +1,7 @@
 import { Router, type Router as RouterT } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  assistantAuditFiltersSchema,
   assistantProposalCreateSchema,
   assistantProposalFiltersSchema,
 } from '../shared/index.js';
@@ -15,6 +16,50 @@ import {
 
 export const assistantRouter: RouterT = Router();
 assistantRouter.use(requireAuth);
+
+assistantRouter.get(
+  '/audit-events',
+  validateQuery(assistantAuditFiltersSchema),
+  async (req, res, next) => {
+    try {
+      const q = (req as never as { validatedQuery: ReturnType<typeof assistantAuditFiltersSchema.parse> })
+        .validatedQuery;
+      const where: Prisma.AuditLogWhereInput = {
+        userId: req.userId!,
+        action: { startsWith: 'proposal.' },
+        ...(q.proposalId ? { proposalId: q.proposalId } : {}),
+        ...(q.action ? { action: q.action } : {}),
+      };
+      const [total, items] = await Promise.all([
+        prisma.auditLog.count({ where }),
+        prisma.auditLog.findMany({
+          where,
+          orderBy: { at: 'desc' },
+          skip: (q.page - 1) * q.limit,
+          take: q.limit,
+          include: {
+            proposal: {
+              select: {
+                id: true,
+                actionType: true,
+                status: true,
+                sourceChannel: true,
+                clawMode: true,
+                riskLevel: true,
+                summary: true,
+                resultEntity: true,
+                resultEntityId: true,
+              },
+            },
+          },
+        }),
+      ]);
+      res.json({ total, page: q.page, limit: q.limit, items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 assistantRouter.get('/proposals', validateQuery(assistantProposalFiltersSchema), async (req, res, next) => {
   try {

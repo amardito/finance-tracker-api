@@ -8,7 +8,6 @@ import { config } from '../lib/config.js';
 import { HttpError } from '../middleware/error.js';
 import { validateBody } from '../middleware/validate.js';
 import { requireAuth } from '../middleware/auth.js';
-import { defaultCategories } from '../services/defaults.js';
 
 export const authRouter: RouterT = Router();
 
@@ -44,9 +43,6 @@ authRouter.post('/token/new', limiter, validateBody(newTokenSchema), async (req,
         currency: config.DEFAULT_CURRENCY,
         tokenHash,
       },
-    });
-    await prisma.category.createMany({
-      data: defaultCategories.map((c) => ({ ...c, userId: user.id })),
     });
     const session = await getSession(req, res);
     session.userId = user.id;
