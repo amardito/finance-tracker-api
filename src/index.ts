@@ -20,6 +20,7 @@ import { recurringRouter } from './routes/recurring.js';
 import { goalsRouter } from './routes/goals.js';
 import { reportsRouter } from './routes/reports.js';
 import { importRouter } from './routes/import.js';
+import { assistantRouter } from './routes/assistant.js';
 import { startRecurringCron } from './jobs/recurring.js';
 import { prisma } from './lib/prisma.js';
 
@@ -90,6 +91,7 @@ export function createApp(): express.Express {
   app.use('/api/goals', goalsRouter);
   app.use('/api/reports', reportsRouter);
   app.use('/api/import', importRouter);
+  app.use('/api/assistant', assistantRouter);
 
   app.use(notFound);
   app.use(errorHandler);

@@ -8,4 +8,5 @@ export * from './schemas/budget.js';
 export * from './schemas/recurring.js';
 export * from './schemas/goal.js';
 export * from './schemas/report.js';
+export * from './schemas/assistant.js';
 export * from './schemas/common.js';
