@@ -43,6 +43,47 @@ enum GoalStatus {
   ARCHIVED
 }
 
+enum AssistantProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  EXECUTED
+  FAILED
+}
+
+enum AssistantProposalSource {
+  WEB_GUIDED
+  WEB_AI
+  CLAW_WHATSAPP
+  RECEIPT_WORKER
+  MCP
+}
+
+enum ClawMode {
+  NONE
+  PICO
+  NANO
+  OPEN
+}
+
+enum AssistantRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AssistantActionType {
+  CREATE_TRANSACTION
+  CREATE_SETUP
+  CREATE_TRANSFER
+  CREATE_BUDGET
+  CREATE_GOAL
+  CREATE_RECURRING_RULE
+  BULK_CATEGORY_CHANGE
+  RECEIPT_TRANSACTION
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String?  @unique
@@ -60,6 +101,7 @@ model User {
   recurringRules RecurringRule[]
   goals          Goal[]
   auditLogs      AuditLog[]
+  assistantProposals AssistantProposal[]
 }
 
 model Account {
@@ -227,6 +269,7 @@ model GoalContribution {
 model AuditLog {
   id       String   @id @default(cuid())
   userId   String
+  proposalId String?
   action   String
   entity   String
   entityId String?
@@ -234,6 +277,34 @@ model AuditLog {
   at       DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  proposal AssistantProposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
 
   @@index([userId, at])
+  @@index([proposalId])
+}
+
+model AssistantProposal {
+  id            String                    @id @default(cuid())
+  userId        String
+  actionType    AssistantActionType
+  status        AssistantProposalStatus   @default(PENDING)
+  sourceChannel AssistantProposalSource
+  clawMode      ClawMode                  @default(NONE)
+  riskLevel     AssistantRiskLevel
+  confidence    Json?
+  payload       Json
+  summary       String
+  expiresAt     DateTime?
+  executedAt    DateTime?
+  failureReason String?
+  resultEntity   String?
+  resultEntityId String?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  auditLogs AuditLog[]
+
+  @@index([userId, status, createdAt])
+  @@index([sourceChannel])
 }
