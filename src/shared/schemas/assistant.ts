@@ -48,5 +48,24 @@ export const assistantProposalFiltersSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+export const assistantAuditActions = [
+  'proposal.create',
+  'proposal.approve',
+  'proposal.reject',
+  'proposal.execute',
+  'proposal.edit',
+  'proposal.undo',
+  'proposal.fail',
+  'proposal.expire',
+] as const;
+
+export const assistantAuditFiltersSchema = z.object({
+  proposalId: z.string().optional(),
+  action: z.enum(assistantAuditActions).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 export type AssistantProposalCreateInput = z.infer<typeof assistantProposalCreateSchema>;
 export type AssistantProposalFilters = z.infer<typeof assistantProposalFiltersSchema>;
+export type AssistantAuditFilters = z.infer<typeof assistantAuditFiltersSchema>;
