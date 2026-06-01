@@ -22,6 +22,7 @@ import { reportsRouter } from './routes/reports.js';
 import { importRouter } from './routes/import.js';
 import { assistantRouter } from './routes/assistant.js';
 import { setupRouter } from './routes/setup.js';
+import { clawRouter, clawServiceRouter } from './routes/claw.js';
 import { startRecurringCron } from './jobs/recurring.js';
 import { prisma } from './lib/prisma.js';
 
@@ -68,7 +69,10 @@ export function createApp(): express.Express {
     }
   });
 
-  // CSRF protection on all /api/* (auth router gets its own GET pass)
+  // Service-authenticated routes do not use browser sessions or CSRF cookies.
+  app.use('/api/claw/service', clawServiceRouter);
+
+  // CSRF protection on all remaining /api/* (auth router gets its own GET pass)
   app.use('/api', csrfProtect);
 
   // CSRF token endpoint — returns the current token in JSON so cross-origin SPAs
@@ -94,6 +98,7 @@ export function createApp(): express.Express {
   app.use('/api/import', importRouter);
   app.use('/api/assistant', assistantRouter);
   app.use('/api/setup', setupRouter);
+  app.use('/api/claw', clawRouter);
 
   app.use(notFound);
   app.use(errorHandler);

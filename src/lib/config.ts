@@ -24,6 +24,7 @@ const envSchema = z.object({
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
   LOG_LEVEL: z.string().default('info'),
+  FINTRACK_SERVICE_TOKEN: z.string().min(16).optional(),
 });
 
 export const config = envSchema.parse(process.env);

@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { cookieSameSite, cookieSecure, getSession } from '../lib/session.js';
+import { config } from '../lib/config.js';
 import { HttpError } from './error.js';
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -12,6 +13,31 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   } catch (err) {
     next(err);
   }
+}
+
+export function requireServiceAuth(req: Request, _res: Response, next: NextFunction): void {
+  try {
+    if (!config.FINTRACK_SERVICE_TOKEN) {
+      throw new HttpError(503, 'SERVICE_AUTH_NOT_CONFIGURED', 'Service authentication is not configured');
+    }
+    const auth = req.headers.authorization ?? '';
+    const bearer = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
+    const headerToken = req.headers['x-fintrack-service-token'];
+    const token = bearer || (Array.isArray(headerToken) ? headerToken[0] : headerToken) || '';
+    if (!constantTimeEquals(token, config.FINTRACK_SERVICE_TOKEN)) {
+      throw new HttpError(401, 'SERVICE_UNAUTHENTICATED', 'Invalid service credentials');
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+function constantTimeEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
 }
 
 const CSRF_HEADER = 'x-xsrf-token';
