@@ -23,7 +23,7 @@ export function requireServiceAuth(req: Request, _res: Response, next: NextFunct
     const auth = req.headers.authorization ?? '';
     const bearer = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
     const headerToken = req.headers['x-fintrack-service-token'];
-    const token = bearer || (Array.isArray(headerToken) ? headerToken[0] : headerToken) || '';
+    const token = compactSecret(bearer || (Array.isArray(headerToken) ? headerToken[0] : headerToken) || '');
     if (!constantTimeEquals(token, config.FINTRACK_SERVICE_TOKEN)) {
       throw new HttpError(401, 'SERVICE_UNAUTHENTICATED', 'Invalid service credentials');
     }
@@ -31,6 +31,10 @@ export function requireServiceAuth(req: Request, _res: Response, next: NextFunct
   } catch (err) {
     next(err);
   }
+}
+
+function compactSecret(value: string): string {
+  return value.replace(/\s+/g, '');
 }
 
 function constantTimeEquals(a: string, b: string): boolean {

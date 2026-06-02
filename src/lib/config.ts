@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const compactSecret = (value: string | undefined) => value?.replace(/\s+/g, '');
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(4000),
@@ -24,7 +26,10 @@ const envSchema = z.object({
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
   LOG_LEVEL: z.string().default('info'),
-  FINTRACK_SERVICE_TOKEN: z.string().min(16).optional(),
+  FINTRACK_SERVICE_TOKEN: z.preprocess(
+    (value) => compactSecret(typeof value === 'string' ? value : undefined),
+    z.string().min(16).optional(),
+  ),
 });
 
 export const config = envSchema.parse(process.env);
