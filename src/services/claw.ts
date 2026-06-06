@@ -6,7 +6,6 @@ import { createAssistantProposal, writeAssistantAudit } from './assistant-propos
 import {
   getCanonicalIdHash,
   getConnectionByClawIdentity,
-  resolveClawIdentity,
 } from './identity.js';
 import type {
   ClawCommandIngressInput,
@@ -332,11 +331,15 @@ function normalizeLinkCode(code: string): string {
 }
 
 function isUnsupportedIntent(text: string): boolean {
-  const normalized = text.toLowerCase();
-  const unsupportedKeywords = [
-    'setup', 'budget', 'goal', 'report', 'export', 'set up', 'create budget', 'create goal'
+  const normalized = text.toLowerCase().trim();
+  // Only match if the text STARTS with these command-like keywords
+  // to avoid false positives on normal transaction text containing these words
+  const unsupportedPatterns = [
+    /^(setup|set\s+up)\b/,
+    /^(create|make|add)\s+(a\s+)?(budget|goal)\b/,
+    /^(report|export)\b/,
   ];
-  return unsupportedKeywords.some(keyword => normalized.includes(keyword));
+  return unsupportedPatterns.some(pattern => pattern.test(normalized));
 }
 
 export async function parsePicoTextCommand(userId: string, text: string): Promise<any> {

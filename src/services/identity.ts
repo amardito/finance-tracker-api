@@ -4,7 +4,7 @@ import type { ClawProvider } from '@prisma/client';
 // Normalize WhatsApp ID to remove device suffixes and standardize format
 export function normalizeWhatsAppId(id: string | null | undefined): string {
   if (!id) return '';
-  let normalized = id.trim();
+  const normalized = id.trim();
 
   if (normalized.includes('@')) {
     const parts = normalized.split('@');
@@ -40,7 +40,6 @@ export async function resolveClawIdentity(
   externalId: string,
   displayName?: string
 ) {
-  const normalizedId = normalizeWhatsAppId(externalId);
   const canonicalIdHash = getCanonicalIdHash(provider, externalId);
   
   // Look for existing alias
