@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { HttpError } from '../middleware/error.js';
 import { assistantTransactionPayloadSchema } from '../shared/index.js';
+import { accountSetupPayloadSchema } from '../shared/schemas/account-setup.js';
+import { recurringRuleProposalPayloadSchema } from '../shared/schemas/recurring-proposal.js';
 
 type ProposalWithAuditInput = {
   userId: string;
@@ -77,25 +79,6 @@ export async function transitionAssistantProposal(
   if (proposal.status !== 'PENDING') {
     throw new HttpError(409, 'INVALID_PROPOSAL_STATUS', 'Only pending proposals can transition');
   }
-  if (proposal.expiresAt && proposal.expiresAt <= new Date()) {
-    const expired = await prisma.assistantProposal.update({
-      where: { id: proposal.id },
-    data: { status: 'EXPIRED' },
-    });
-    await writeAssistantAudit({
-      userId,
-      proposalId: proposal.id,
-      action: 'proposal.expire',
-      entity: 'AssistantProposal',
-      entityId: proposal.id,
-      payload: {
-        actionType: proposal.actionType,
-        sourceChannel: proposal.sourceChannel,
-        expiredAt: expired.expiresAt?.toISOString(),
-      },
-    });
-    throw new HttpError(409, 'PROPOSAL_EXPIRED', `Proposal expired at ${expired.expiresAt?.toISOString()}`);
-  }
   const status = transition === 'approve' ? 'APPROVED' : 'REJECTED';
   const updated = await prisma.assistantProposal.update({
     where: { id: proposal.id },
@@ -122,27 +105,96 @@ export async function executeAssistantProposal(userId: string, proposalId: strin
   if (proposal.status !== 'APPROVED') {
     throw new HttpError(409, 'INVALID_PROPOSAL_STATUS', 'Only approved proposals can execute');
   }
-  if (proposal.expiresAt && proposal.expiresAt <= new Date()) {
-    await prisma.assistantProposal.update({
-      where: { id: proposal.id },
-      data: { status: 'EXPIRED' },
-    });
-    await writeAssistantAudit({
-      userId,
-      proposalId: proposal.id,
-      action: 'proposal.expire',
-      entity: 'AssistantProposal',
-      entityId: proposal.id,
-      payload: {
-        actionType: proposal.actionType,
-        sourceChannel: proposal.sourceChannel,
-        expiredAt: proposal.expiresAt.toISOString(),
-      },
-    });
-    throw new HttpError(409, 'PROPOSAL_EXPIRED', `Proposal expired at ${proposal.expiresAt.toISOString()}`);
-  }
 
   try {
+    if (proposal.actionType === 'CREATE_SETUP') {
+      const payload = accountSetupPayloadSchema.parse(proposal.payload);
+      const result = await prisma.$transaction(async (tx) => {
+        const createdAccounts = await Promise.all(
+          payload.accounts.map((acc) =>
+            tx.account.create({
+              data: {
+                userId,
+                name: acc.name,
+                type: acc.type,
+                openingBalance: acc.openingBalance,
+                currency: acc.currency,
+              },
+            }),
+          ),
+        );
+        const updatedProposal = await tx.assistantProposal.update({
+          where: { id: proposal.id },
+          data: {
+            status: 'EXECUTED',
+            executedAt: new Date(),
+            resultEntity: 'Account',
+            resultEntityId: createdAccounts[0]?.id,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            userId,
+            proposalId: proposal.id,
+            action: 'proposal.execute',
+            entity: 'Account',
+            entityId: createdAccounts[0]?.id,
+            payload: {
+              actionType: proposal.actionType,
+              sourceChannel: proposal.sourceChannel,
+              count: createdAccounts.length,
+            },
+          },
+        });
+        return { proposal: updatedProposal, accounts: createdAccounts };
+      });
+      return result;
+    }
+
+    if (proposal.actionType === 'CREATE_RECURRING_RULE') {
+      const payload = recurringRuleProposalPayloadSchema.parse(proposal.payload);
+      const result = await prisma.$transaction(async (tx) => {
+        const recurringRule = await tx.recurringRule.create({
+          data: {
+            userId,
+            accountId: payload.accountId,
+            categoryId: payload.categoryId,
+            amount: payload.amount,
+            type: payload.type,
+            cadence: payload.cadence,
+            interval: payload.interval,
+            startDate: new Date(payload.startDate),
+            nextRunAt: new Date(payload.startDate),
+            note: payload.note,
+          },
+        });
+        const updatedProposal = await tx.assistantProposal.update({
+          where: { id: proposal.id },
+          data: {
+            status: 'EXECUTED',
+            executedAt: new Date(),
+            resultEntity: 'RecurringRule',
+            resultEntityId: recurringRule.id,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            userId,
+            proposalId: proposal.id,
+            action: 'proposal.execute',
+            entity: 'RecurringRule',
+            entityId: recurringRule.id,
+            payload: {
+              actionType: proposal.actionType,
+              sourceChannel: proposal.sourceChannel,
+            },
+          },
+        });
+        return { proposal: updatedProposal, recurringRule };
+      });
+      return result;
+    }
+
     if (proposal.actionType !== 'CREATE_TRANSACTION') {
       throw new HttpError(
         422,

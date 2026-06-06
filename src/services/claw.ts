@@ -3,11 +3,35 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { HttpError } from '../middleware/error.js';
 import { createAssistantProposal, writeAssistantAudit } from './assistant-proposals.js';
+import {
+  getCanonicalIdHash,
+  getConnectionByClawIdentity,
+  resolveClawIdentity,
+} from './identity.js';
 import type {
   ClawCommandIngressInput,
   ClawLinkCodeRedeemInput,
   ClawTransactionProposalInput,
+  ClawAccountSetupProposalInput,
 } from '../shared/index.js';
+import { recurringRuleProposalPayloadSchema } from '../shared/schemas/recurring-proposal.js';
+import { z } from 'zod';
+
+export const clawRecurringRuleProposalSchema = z.object({
+  provider: z.enum(['NANOBOT_WHATSAPP']),
+  externalUserId: z.string(),
+  accountId: z.string().min(1),
+  categoryId: z.string().min(1),
+  amount: z.string(),
+  type: z.enum(['INCOME', 'EXPENSE']),
+  cadence: z.enum(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']),
+  interval: z.number().int().min(1).default(1),
+  startDate: z.string(),
+  note: z.string().max(500).optional(),
+  sourceText: z.string(),
+});
+
+export type ClawRecurringRuleProposalInput = z.infer<typeof clawRecurringRuleProposalSchema>;
 
 const LINK_CODE_PREFIX = 'FT';
 
@@ -59,38 +83,55 @@ export async function redeemClawLinkCode(input: ClawLinkCodeRedeemInput) {
     throw new HttpError(410, 'CLAW_LINK_CODE_EXPIRED', 'Link code has expired');
   }
 
-  const existing = await prisma.clawConnection.findUnique({
-    where: {
-      provider_externalUserId: {
-        provider: input.provider,
-        externalUserId: input.externalUserId,
-      },
-    },
-  });
+  const existing = await getConnectionByClawIdentity(input.provider, input.externalUserId);
   if (existing && existing.status === 'LINKED' && existing.userId !== linkCode.userId) {
     throw new HttpError(409, 'CLAW_ID_ALREADY_LINKED', 'This Claw identity is already linked');
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const connection = existing
-      ? await tx.clawConnection.update({
-          where: { id: existing.id },
-          data: {
-            userId: linkCode.userId,
-            displayName: input.displayName,
-            status: 'LINKED',
-            revokedAt: null,
-            linkedAt: now,
-          },
-        })
-      : await tx.clawConnection.create({
-          data: {
-            userId: linkCode.userId,
-            provider: input.provider,
-            externalUserId: input.externalUserId,
-            displayName: input.displayName,
-          },
-        });
+    let connection;
+    if (existing) {
+      connection = await tx.clawConnection.update({
+        where: { id: existing.id },
+        data: {
+          userId: linkCode.userId,
+          displayName: input.displayName,
+          status: 'LINKED',
+          revokedAt: null,
+          linkedAt: now,
+        },
+      });
+    } else {
+      connection = await tx.clawConnection.create({
+        data: {
+          userId: linkCode.userId,
+          provider: input.provider,
+          externalUserId: input.externalUserId,
+          displayName: input.displayName,
+        },
+      });
+    }
+
+    await tx.clawIdentityAlias.upsert({
+      where: {
+        provider_externalId: {
+          provider: input.provider,
+          externalId: input.externalUserId,
+        },
+      },
+      update: {
+        userId: linkCode.userId,
+        displayName: input.displayName,
+      },
+      create: {
+        userId: linkCode.userId,
+        provider: input.provider,
+        externalId: input.externalUserId,
+        canonicalIdHash: getCanonicalIdHash(input.provider, input.externalUserId),
+        displayName: input.displayName,
+      },
+    });
+
     await tx.clawLinkCode.update({
       where: { id: linkCode.id },
       data: { redeemedAt: now, connectionId: connection.id },
@@ -173,6 +214,54 @@ export async function createTransactionProposalFromClaw(input: ClawTransactionPr
   return { proposal, connectionId: connection.id };
 }
 
+export async function createAccountSetupProposalFromClaw(input: ClawAccountSetupProposalInput) {
+  const connection = await requireLinkedConnection(input.provider, input.externalUserId);
+  const userId = connection.userId;
+
+  const summary = `Setup ${input.accounts.length} account(s): ${input.accounts.map((a) => a.name).join(', ')}`;
+
+  const proposal = await createAssistantProposal(userId, {
+    actionType: 'CREATE_SETUP',
+    sourceChannel: 'CLAW_WHATSAPP',
+    clawMode: 'NANO',
+    riskLevel: 'MEDIUM',
+    confidence: {
+      source: 'marbot-account-setup',
+      sourceText: input.sourceText,
+    },
+    payload: {
+      accounts: input.accounts,
+    },
+    summary,
+  });
+
+  await markConnectionUsed(connection.id);
+  return { proposal, connectionId: connection.id };
+}
+
+export async function createRecurringRuleProposalFromClaw(input: ClawRecurringRuleProposalInput) {
+  const connection = await requireLinkedConnection(input.provider, input.externalUserId);
+  const userId = connection.userId;
+
+  const summary = `Create recurring ${input.type} rule: ${input.amount} ${input.cadence} for ${input.accountId}`;
+
+  const proposal = await createAssistantProposal(userId, {
+    actionType: 'CREATE_RECURRING_RULE',
+    sourceChannel: 'CLAW_WHATSAPP',
+    clawMode: 'NANO',
+    riskLevel: 'MEDIUM',
+    confidence: {
+      source: 'marbot-recurring-rule',
+      sourceText: input.sourceText,
+    },
+    payload: recurringRuleProposalPayloadSchema.parse(input),
+    summary,
+  });
+
+  await markConnectionUsed(connection.id);
+  return { proposal, connectionId: connection.id };
+}
+
 export async function handleClawCommand(input: ClawCommandIngressInput) {
   const connection = await requireLinkedConnection(input.provider, input.externalUserId);
   const parsed = await parsePicoTextCommand(connection.userId, input.text);
@@ -184,6 +273,16 @@ export async function handleClawCommand(input: ClawCommandIngressInput) {
       message: `I need ${parsed.missingFields.join(', ')} before I can create a proposal.`,
     };
   }
+
+  // FT-128: Add check for unsupported intents
+  if (isUnsupportedIntent(input.text)) {
+      await markConnectionUsed(connection.id);
+      return {
+        status: 'UNSUPPORTED_INTENT',
+        message: 'I currently support creating transactions. Setup, budget, goal, report, and export features are coming soon.',
+      };
+  }
+
   const result = await createTransactionProposalFromClaw({
     provider: input.provider,
     externalUserId: input.externalUserId,
@@ -207,29 +306,40 @@ export async function handleClawCommand(input: ClawCommandIngressInput) {
   };
 }
 
-type ParsedPicoCommand =
-  | {
-      ready: true;
-      type: 'INCOME' | 'EXPENSE';
-      amount: string;
-      accountId: string;
-      categoryId: string;
-      note: string;
-      confidence: number;
-      missingFields: [];
-    }
-  | {
-      ready: false;
-      type?: 'INCOME' | 'EXPENSE';
-      amount?: string;
-      accountId?: string;
-      categoryId?: string;
-      note: string;
-      confidence: number;
-      missingFields: string[];
-    };
+async function requireLinkedConnection(provider: string, externalUserId: string) {
+  const connection = await getConnectionByClawIdentity(provider as any, externalUserId);
+  if (!connection || connection.status !== 'LINKED') {
+    throw new HttpError(401, 'CLAW_CONNECTION_REQUIRED', 'Claw identity is not linked or has been revoked');
+  }
+  return connection;
+}
 
-export async function parsePicoTextCommand(userId: string, text: string): Promise<ParsedPicoCommand> {
+async function markConnectionUsed(connectionId: string): Promise<void> {
+  await prisma.clawConnection.update({ where: { id: connectionId }, data: { lastUsedAt: new Date() } });
+}
+
+function generateLinkCode(): string {
+  const raw = randomBytes(6).toString('hex').toUpperCase();
+  return `${LINK_CODE_PREFIX}-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+}
+
+function hashLinkCode(code: string): string {
+  return createHash('sha256').update(normalizeLinkCode(code)).digest('hex');
+}
+
+function normalizeLinkCode(code: string): string {
+  return code.trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function isUnsupportedIntent(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const unsupportedKeywords = [
+    'setup', 'budget', 'goal', 'report', 'export', 'set up', 'create budget', 'create goal'
+  ];
+  return unsupportedKeywords.some(keyword => normalized.includes(keyword));
+}
+
+export async function parsePicoTextCommand(userId: string, text: string): Promise<any> {
   const normalized = text.toLowerCase();
   const type = inferTransactionType(normalized);
   const amount = parseCasualAmount(normalized);
@@ -268,33 +378,6 @@ export async function parsePicoTextCommand(userId: string, text: string): Promis
     confidence,
     missingFields: [],
   };
-}
-
-async function requireLinkedConnection(provider: ClawLinkCodeRedeemInput['provider'], externalUserId: string) {
-  const connection = await prisma.clawConnection.findUnique({
-    where: { provider_externalUserId: { provider, externalUserId } },
-  });
-  if (!connection || connection.status !== 'LINKED') {
-    throw new HttpError(401, 'CLAW_CONNECTION_REQUIRED', 'Claw identity is not linked or has been revoked');
-  }
-  return connection;
-}
-
-async function markConnectionUsed(connectionId: string): Promise<void> {
-  await prisma.clawConnection.update({ where: { id: connectionId }, data: { lastUsedAt: new Date() } });
-}
-
-function generateLinkCode(): string {
-  const raw = randomBytes(6).toString('hex').toUpperCase();
-  return `${LINK_CODE_PREFIX}-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
-}
-
-function hashLinkCode(code: string): string {
-  return createHash('sha256').update(normalizeLinkCode(code)).digest('hex');
-}
-
-function normalizeLinkCode(code: string): string {
-  return code.trim().toUpperCase().replace(/\s+/g, '');
 }
 
 function inferTransactionType(text: string): 'INCOME' | 'EXPENSE' {

@@ -4,12 +4,16 @@ import {
   clawLinkCodeCreateSchema,
   clawLinkCodeRedeemSchema,
   clawTransactionProposalSchema,
+  clawAccountSetupProposalSchema,
 } from '../shared/index.js';
 import { requireAuth, requireServiceAuth } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import {
   createClawLinkCode,
   createTransactionProposalFromClaw,
+  createAccountSetupProposalFromClaw,
+  createRecurringRuleProposalFromClaw,
+  clawRecurringRuleProposalSchema,
   handleClawCommand,
   listClawConnections,
   redeemClawLinkCode,
@@ -58,6 +62,22 @@ clawServiceRouter.post('/link-codes/redeem', validateBody(clawLinkCodeRedeemSche
 clawServiceRouter.post('/proposals/transaction', validateBody(clawTransactionProposalSchema), async (req, res, next) => {
   try {
     res.status(201).json(await createTransactionProposalFromClaw(req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+clawServiceRouter.post('/proposals/account-setup', validateBody(clawAccountSetupProposalSchema), async (req, res, next) => {
+  try {
+    res.status(201).json(await createAccountSetupProposalFromClaw(req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+clawServiceRouter.post('/proposals/recurring-rule', validateBody(clawRecurringRuleProposalSchema), async (req, res, next) => {
+  try {
+    res.status(201).json(await createRecurringRuleProposalFromClaw(req.body));
   } catch (err) {
     next(err);
   }

@@ -10,4 +10,6 @@ export * from './schemas/goal.js';
 export * from './schemas/report.js';
 export * from './schemas/assistant.js';
 export * from './schemas/claw.js';
+export * from './schemas/account-setup.js';
+export * from './schemas/recurring-proposal.js';
 export * from './schemas/common.js';
