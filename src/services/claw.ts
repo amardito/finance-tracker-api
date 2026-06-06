@@ -82,16 +82,26 @@ export async function redeemClawLinkCode(input: ClawLinkCodeRedeemInput) {
     throw new HttpError(410, 'CLAW_LINK_CODE_EXPIRED', 'Link code has expired');
   }
 
-  const existing = await getConnectionByClawIdentity(input.provider, input.externalUserId);
-  if (existing && existing.status === 'LINKED' && existing.userId !== linkCode.userId) {
+  const existingAliasConnection = await getConnectionByClawIdentity(input.provider, input.externalUserId);
+  if (existingAliasConnection && existingAliasConnection.status === 'LINKED' && existingAliasConnection.userId !== linkCode.userId) {
     throw new HttpError(409, 'CLAW_ID_ALREADY_LINKED', 'This Claw identity is already linked');
   }
 
+  // Exact match for the unique constraint (provider + externalUserId) regardless of status or alias
+  const exactExisting = await prisma.clawConnection.findUnique({
+    where: {
+      provider_externalUserId: {
+        provider: input.provider,
+        externalUserId: input.externalUserId,
+      },
+    },
+  });
+
   const result = await prisma.$transaction(async (tx) => {
     let connection;
-    if (existing) {
+    if (exactExisting) {
       connection = await tx.clawConnection.update({
-        where: { id: existing.id },
+        where: { id: exactExisting.id },
         data: {
           userId: linkCode.userId,
           displayName: input.displayName,
